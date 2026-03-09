@@ -4,7 +4,17 @@ export default class Component {
         this.state = this.initialState();
         this.element = null; // The actual DOM node
         this.boundEvents = []; // Tracks events for strict memory cleanup
+
+        // NEW: If a store is passed in, subscribe to it
+        if (props.store instanceof Store) {
+            props.store.events.subscribe('stateChange', () => {
+                // Automatically re-render the component when global state changes
+                this.update();
+            });
+        }
     }
+
+
 
     // Lifecycle methods to be overridden by child classes
     initialState() { return {}; }
