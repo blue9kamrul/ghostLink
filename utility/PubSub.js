@@ -8,7 +8,13 @@ export default class PubSub {
         if (!this.events.hasOwnProperty(event)) {
             this.events[event] = [];
         }
-        return this.events[event].push(callback);
+        const list = this.events[event];
+        list.push(callback);
+        // Return an unsubscribe function so callers can remove the listener
+        return () => {
+            const idx = list.indexOf(callback);
+            if (idx !== -1) list.splice(idx, 1);
+        };
     }
 
     // The Store will 'publish' when the Proxy detects a change

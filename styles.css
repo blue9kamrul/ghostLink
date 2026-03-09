@@ -1,0 +1,17 @@
+body { font-family: sans-serif; padding: 20px; background: #1a1a1a; color: #fff; }
+#app { max-width: 800px; margin: 0 auto; }
+
+/* Drop zone visuals */
+.drop-zone {
+  border-radius: 8px;
+  background: rgba(255,255,255,0.02);
+  color: #ddd;
+  transition: box-shadow 0.2s ease, background 0.2s ease, transform 0.15s ease;
+}
+
+.drop-zone.active-drag {
+  box-shadow: 0 8px 30px rgba(0,150,255,0.18), 0 2px 6px rgba(0,0,0,0.5) inset;
+  background: linear-gradient(180deg, rgba(0,150,255,0.06), rgba(0,150,255,0.02));
+  transform: translateY(-2px);
+  border-color: rgba(0,150,255,0.9);
+}

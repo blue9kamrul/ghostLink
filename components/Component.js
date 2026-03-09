@@ -1,3 +1,5 @@
+import Store from '../utility/Store.js';
+
 export default class Component {
     constructor(props = {}) {
         this.props = props;
@@ -5,12 +7,18 @@ export default class Component {
         this.element = null; // The actual DOM node
         this.boundEvents = []; // Tracks events for strict memory cleanup
 
-        // NEW: If a store is passed in, subscribe to it
-        if (props.store instanceof Store) {
-            props.store.events.subscribe('stateChange', () => {
-                // Automatically re-render the component when global state changes
-                this.update();
-            });
+        // If a Store instance is provided via props, subscribe to its state changes
+        // Defensive checks: PubSub.subscribe currently returns a push index, not an unsubscribe function.
+        // We still subscribe if possible, but avoid throwing if the API differs.
+        try {
+            if (props && props.store instanceof Store && props.store.events && typeof props.store.events.subscribe === 'function') {
+                // subscribe returns an unsubscribe function (PubSub now provides it)
+                this._unsubscribeStore = props.store.events.subscribe('stateChange', () => {
+                    this.update();
+                });
+            }
+        } catch (e) {
+            // ignore subscription errors to keep components usable without a Store
         }
     }
 
@@ -83,6 +91,11 @@ export default class Component {
     // Destroy the component safely
     unmount() {
         this.onUnmount();
+        // If we subscribed to a Store, unsubscribe now to avoid leaks
+        if (this._unsubscribeStore && typeof this._unsubscribeStore === 'function') {
+            try { this._unsubscribeStore(); } catch (e) { /* ignore */ }
+            this._unsubscribeStore = null;
+        }
         // Strict garbage collection preparation
         this.boundEvents.forEach(({ type, target, listener }) => {
             target.removeEventListener(type, listener);

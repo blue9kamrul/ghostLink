@@ -1,33 +1,26 @@
-import Store from './Store.js';
+// index.js
+import Store from './utility/Store.js';
+import DropZone from './components/ui/DropZone.js';
 import Component from './components/Component.js';
 
-// 1. Initialize the Global Store
 const globalStore = new Store({
-    initialState: {
-        peerId: 'waiting...',
-        filesTransferred: 0
-    }
+    initialState: { files: [] }
 });
 
-// 2. Create a Component connected to the Store
-class StatusPanel extends Component {
+// A simple component to show the parsed files
+class FileTree extends Component {
     template() {
-        return `
-      <div class="status-panel">
-        <h3>Network Status</h3>
-        <p>Peer ID: ${this.props.store.state.peerId}</p>
-        <p>Files Sent: ${this.props.store.state.filesTransferred}</p>
-      </div>
-    `;
+        const files = this.props.store.state.files;
+        if (files.length === 0) return `<p>No files selected.</p>`;
+
+        const listItems = files.map(f => `<li>${f.fullPath} (${(f.size / 1024).toFixed(2)} KB)</li>`).join('');
+        return `<ul>${listItems}</ul>`;
     }
 }
 
-// 3. Mount it
-const panel = new StatusPanel({ store: globalStore });
-panel.mount(document.getElementById('app'));
+// Mount everything
+const dropZone = new DropZone({ store: globalStore });
+dropZone.mount(document.getElementById('app'));
 
-// 4. Simply updating the property automatically updates the UI!
-setTimeout(() => {
-    // No render() call needed! The Proxy catches this and updates the DOM.
-    globalStore.state.peerId = 'kamrul-node-99X';
-}, 2000);
+const fileTree = new FileTree({ store: globalStore });
+fileTree.mount(document.getElementById('app'));
