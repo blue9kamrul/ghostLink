@@ -2,6 +2,7 @@ import Store from './store/Store.js';
 import DropZone from './components/ui/DropZone.js';
 import Component from './components/Component.js';
 import { createChunkGenerator } from './helpers/FileChunker.js';
+import WorkerManager from './utils/WorkerManager.js';
 
 const globalStore = new Store({
     initialState: { files: [] }
@@ -28,6 +29,15 @@ fileTree.mount(document.getElementById('app'));
 // Debug helpers: expose store and log mount status so you can diagnose in DevTools
 window.globalStore = globalStore;
 console.log('App mounted: dropZone and fileTree. Inspect `window.globalStore` to test updates.');
+
+// Worker manager for off-main-thread chunk processing
+const workerBoss = new WorkerManager();
+window.workerBoss = workerBoss;
+// Example usage (uncomment to run):
+// workerBoss.processFile(someFile, (progress) => {
+//   console.log(`Processing: ${progress}%`);
+//   globalStore.state.progress = progress;
+// });
 
 // a dummy function to simulate processing a file
 async function processFile(file) {
