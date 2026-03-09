@@ -52,6 +52,17 @@ export default class DropZone extends Component {
         // Assuming this.props.store was passed in, we append the new files
         const currentFiles = this.props.store.state.files || [];
         this.props.store.state.files = [...currentFiles, ...extractedFiles];
+
+        // Quick test hook: if the chunker test function is exposed, run it on the first file
+        try {
+            if (typeof window !== 'undefined' && typeof window.testChunker === 'function' && extractedFiles.length > 0) {
+                console.log('Running testChunker on first dropped file...');
+                // Call once and handle rejection
+                window.testChunker(extractedFiles[0]).catch(err => console.error('testChunker error:', err));
+            }
+        } catch (err) {
+            console.error('Error calling testChunker:', err);
+        }
     }
 }
 

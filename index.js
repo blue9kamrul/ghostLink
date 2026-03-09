@@ -1,7 +1,7 @@
-// index.js
-import Store from './utility/Store.js';
+import Store from './store/Store.js';
 import DropZone from './components/ui/DropZone.js';
 import Component from './components/Component.js';
+import { createChunkGenerator } from './helpers/FileChunker.js';
 
 const globalStore = new Store({
     initialState: { files: [] }
@@ -24,3 +24,33 @@ dropZone.mount(document.getElementById('app'));
 
 const fileTree = new FileTree({ store: globalStore });
 fileTree.mount(document.getElementById('app'));
+
+// Debug helpers: expose store and log mount status so you can diagnose in DevTools
+window.globalStore = globalStore;
+console.log('App mounted: dropZone and fileTree. Inspect `window.globalStore` to test updates.');
+
+// a dummy function to simulate processing a file
+async function processFile(file) {
+    console.log(`Starting to read: ${file.name}`);
+
+    // Initialize the generator
+    const chunkStream = createChunkGenerator(file);
+
+    let chunkCount = 0;
+
+    // The 'for await...of' loop is specifically designed to consume async generators
+    for await (const chunk of chunkStream) {
+        chunkCount++;
+        console.log(`Read chunk ${chunkCount} at offset ${chunk.offset}. Size: ${chunk.buffer.byteLength} bytes`);
+
+        // If this was a 10GB file, we are only holding 64KB in RAM right now!
+
+        if (chunk.isDone) {
+            console.log(`Finished reading ${file.name} in ${chunkCount} chunks.`);
+        }
+    }
+}
+
+// trigger this manually in the browser console for testing, 
+// or hook it up to a button in your DropZone component!
+window.testChunker = processFile;

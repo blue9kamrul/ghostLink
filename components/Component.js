@@ -1,4 +1,4 @@
-import Store from '../utility/Store.js';
+import Store from '../store/Store.js';
 
 export default class Component {
     constructor(props = {}) {
