@@ -2,7 +2,7 @@ import Store from './store/Store.js';
 import DropZone from './components/ui/DropZone.js';
 import Component from './components/Component.js';
 import { createChunkGenerator } from './helpers/FileChunker.js';
-import WorkerManager from './utils/WorkerManager.js';
+import WorkerManager from './worker/WorkerManager.js';
 
 const globalStore = new Store({
     initialState: { files: [] }
