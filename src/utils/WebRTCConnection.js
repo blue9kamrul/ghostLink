@@ -1,3 +1,6 @@
+import FileStreamer from './FileStreamer.js';
+import FileReceiver from './FileReceiver.js';
+
 export default class WebRTCConnection {
     constructor(signalingChannel, isInitiator = false) {
         this.signal = signalingChannel;
@@ -10,6 +13,21 @@ export default class WebRTCConnection {
 
         // 1. Initialize the native RTCPeerConnection
         this.peerConnection = new RTCPeerConnection(configuration);
+
+        // NEW: Data channel reference (for file transfer)
+        this.dataChannel = null;
+
+        // NEW: If we are the Initiator, create the data channel now
+        if (this.isInitiator) {
+            this.dataChannel = this.peerConnection.createDataChannel('ghostlink-transfer', { ordered: true });
+            this.setupDataChannel();
+        } else {
+            // If Receiver, wait for the remote data channel
+            this.peerConnection.ondatachannel = (event) => {
+                this.dataChannel = event.channel;
+                this.setupDataChannel();
+            };
+        }
 
         // 2. Set up local ICE Candidate gathering
         // When the STUN server finds our IP/Port, this event fires
@@ -32,7 +50,71 @@ export default class WebRTCConnection {
         };
     }
 
+    // NEW: Configure the RTCDataChannel once it exists
+    setupDataChannel() {
+        if (!this.dataChannel) return;
+
+        // We will send/receive raw ArrayBuffers
+        this.dataChannel.binaryType = 'arraybuffer';
+
+        this.dataChannel.onopen = () => {
+            console.log('🟢 RTCDataChannel OPEN! Ready to stream binary.');
+
+            // Expose simple helpers for manual testing from DevTools:
+            // - startStreaming(packetGenerator): streams an async generator over the data channel
+            // - attachReceiver(key, totalChunks, fileName, mime): attach a FileReceiver to handle incoming packets
+            window.startStreaming = async (packetGenerator) => {
+                try {
+                    await this.sendStream(packetGenerator);
+                } catch (e) {
+                    console.error('startStreaming failed', e);
+                }
+            };
+
+            window.attachReceiver = (key, totalChunks, fileName = 'download.bin', mime = 'application/octet-stream') => {
+                this.fileReceiver = new FileReceiver(key, totalChunks, fileName, mime);
+                console.log('FileReceiver attached:', { fileName, totalChunks });
+            };
+        };
+
+        this.dataChannel.onclose = () => {
+            console.log('🔴 RTCDataChannel CLOSED.');
+        };
+
+        this.dataChannel.onmessage = (event) => {
+            // If a FileReceiver has been attached from the app, forward packets to it
+            if (this.fileReceiver && typeof this.fileReceiver.receivePacket === 'function') {
+                this.fileReceiver.receivePacket(event.data);
+                return;
+            }
+
+            // Example for receiver usage (call from your app when you know the key/metadata):
+            // this.fileReceiver = new FileReceiver(sharedKey, 1500, 'video.mp4', 'video/mp4');
+
+            // Fallback: log size for debugging
+            try {
+                const len = event.data && event.data.byteLength ? event.data.byteLength : event.data.length || 0;
+                console.log(`Received packet: ${len} bytes`);
+            } catch (e) {
+                console.log('Received data on dataChannel', event.data);
+            }
+        };
+    }
+
     // --- THE HANDSHAKE METHODS ---
+
+    /**
+     * Streams an async packet generator over the RTCDataChannel using FileStreamer.
+     * @param {AsyncGenerator} packetGenerator
+     */
+    async sendStream(packetGenerator) {
+        if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+            throw new Error('DataChannel is not open. Wait for onopen before sending.');
+        }
+
+        const streamer = new FileStreamer(this.dataChannel);
+        return streamer.stream(packetGenerator);
+    }
 
     /**
      * Called by Peer A (The Sender) to start the connection.

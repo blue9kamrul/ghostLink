@@ -27,6 +27,8 @@ export default class SignalingChannel {
 
             this.socket.onmessage = (event) => {
                 const data = JSON.parse(event.data);
+                // Log incoming raw signaling for easier debugging
+                console.log('Signaling incoming:', data);
                 // Trigger all registered handlers when a message arrives
                 this.messageHandlers.forEach(handler => handler(data));
             };

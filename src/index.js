@@ -120,6 +120,8 @@ async function initP2P() {
     const isInitiator = window.location.search.includes('init=true');
 
     const webrtc = new WebRTCConnection(signal, isInitiator);
+    // Expose for manual testing from DevTools
+    window.webrtc = webrtc;
 
     // Route incoming signaling messages to the WebRTC connection
     signal.onMessage((msg) => {
@@ -146,4 +148,4 @@ async function initP2P() {
     }
 }
 
-// initP2P(); // Uncomment to test P2P flow
+initP2P(); // Auto-start P2P for testing (open two tabs; one with ?init=true)

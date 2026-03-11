@@ -76,9 +76,17 @@ export function packEncryptedChunk(fileId, chunkIndex, iv, encryptedBuffer) {
  */
 export function unpackEncryptedChunk(packetBuffer) {
     const view = new DataView(packetBuffer);
+
+    // 1. Extract Metadata (First 8 bytes)
     const fileId = view.getUint32(0, false);
     const chunkIndex = view.getUint32(4, false);
-    const iv = new Uint8Array(packetBuffer.slice(METADATA_SIZE, HEADER_SIZE));
-    const encryptedData = packetBuffer.slice(HEADER_SIZE);
-    return { fileId, chunkIndex, iv, encryptedData };
+
+    // 2. Extract IV (Next 12 bytes)
+    const packetUint8 = new Uint8Array(packetBuffer);
+    const iv = packetUint8.slice(8, 20); // The 12-byte initialization vector
+
+    // 3. Extract the Encrypted Payload (Byte 20 to the end)
+    const encryptedPayload = packetBuffer.slice(20);
+
+    return { fileId, chunkIndex, iv, encryptedPayload };
 }
