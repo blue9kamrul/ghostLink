@@ -3,8 +3,9 @@ import DropZone from './components/ui/DropZone.js';
 import Component from './components/Component.js';
 import { createChunkGenerator } from './helpers/FileChunker.js';
 import WorkerManager from './worker/WorkerManager.js';
-import DBManager from '../DB/DBManager.js';
+import DBManager from './DB/DBManager.js';
 import { generateEncryptionKey } from './utils/CryptoVault.js';
+import SignalingChannel from './utils/SignalingChannel.js';
 
 const globalStore = new Store({
     initialState: { files: [] }
@@ -86,3 +87,22 @@ async function startup() {
 }
 
 startup();
+
+// Test signaling channel connect to local relay server
+async function testSignaling() {
+    const signal = new SignalingChannel('ws://localhost:8080');
+
+    // Both browsers must use the exact same room ID
+    await signal.connect('ghostlink-room-42');
+
+    signal.onMessage((msg) => {
+        console.log('Received from Peer:', msg);
+    });
+
+    // Attach to a global variable so you can trigger it from the console
+    window.sendHello = () => {
+        signal.send({ type: 'CHAT', text: 'Hello from the other side!' });
+    };
+}
+
+testSignaling();
