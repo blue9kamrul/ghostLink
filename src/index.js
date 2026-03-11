@@ -3,6 +3,8 @@ import DropZone from './components/ui/DropZone.js';
 import Component from './components/Component.js';
 import { createChunkGenerator } from './helpers/FileChunker.js';
 import WorkerManager from './worker/WorkerManager.js';
+import DBManager from '../DB/DBManager.js';
+import { generateEncryptionKey } from './utils/CryptoVault.js';
 
 const globalStore = new Store({
     initialState: { files: [] }
@@ -64,3 +66,23 @@ async function processFile(file) {
 // trigger this manually in the browser console for testing, 
 // or hook it up to a button in your DropZone component!
 window.testChunker = processFile;
+
+// Initialize the database and store an example file metadata + CryptoKey
+const dbManager = new DBManager();
+
+async function startup() {
+    try {
+        await dbManager.init();
+
+        // Example of saving metadata when a new file is dropped
+        const fileId = 101;
+        const key = await generateEncryptionKey();
+
+        await dbManager.saveMetadata(fileId, 'massive_video.mp4', 1500, key);
+        console.log('Metadata and CryptoKey safely stored in IndexedDB.');
+    } catch (err) {
+        console.error('DB startup failed', err);
+    }
+}
+
+startup();
