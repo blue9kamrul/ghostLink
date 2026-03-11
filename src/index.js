@@ -6,6 +6,7 @@ import WorkerManager from './worker/WorkerManager.js';
 import DBManager from './DB/DBManager.js';
 import { generateEncryptionKey } from './utils/CryptoVault.js';
 import SignalingChannel from './utils/SignalingChannel.js';
+import WebRTCConnection from './utils/WebRTCConnection.js';
 
 const globalStore = new Store({
     initialState: { files: [] }
@@ -106,3 +107,43 @@ async function testSignaling() {
 }
 
 testSignaling();
+
+// P2P initialization using Signaling + WebRTC
+async function initP2P() {
+    const signal = new SignalingChannel('ws://localhost:8080');
+
+    // For testing, hardcode a room. In production, users would share a link/code.
+    await signal.connect('ghostlink-room-42');
+
+    // Decide who is the initiator. For testing, we can use a URL parameter or button.
+    // E.g., if URL has ?init=true, they create the offer.
+    const isInitiator = window.location.search.includes('init=true');
+
+    const webrtc = new WebRTCConnection(signal, isInitiator);
+
+    // Route incoming signaling messages to the WebRTC connection
+    signal.onMessage((msg) => {
+        switch (msg.type) {
+            case 'OFFER':
+                if (!isInitiator) webrtc.handleOffer(msg.sdp);
+                break;
+            case 'ANSWER':
+                if (isInitiator) webrtc.handleAnswer(msg.sdp);
+                break;
+            case 'ICE_CANDIDATE':
+                webrtc.handleIceCandidate(msg.candidate);
+                break;
+        }
+    });
+
+    // If this tab is the initiator, start the handshake!
+    if (isInitiator) {
+        // We need a slight delay to ensure the other peer is connected to the WebSocket room
+        // In a real app, Peer B would send a 'READY' WebSocket message first.
+        setTimeout(() => {
+            webrtc.createOffer();
+        }, 2000);
+    }
+}
+
+// initP2P(); // Uncomment to test P2P flow
