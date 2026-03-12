@@ -4,9 +4,13 @@ import Component from './components/Component.js';
 import { createChunkGenerator } from './helpers/FileChunker.js';
 import WorkerManager from './worker/WorkerManager.js';
 import DBManager from './DB/DBManager.js';
-import { generateEncryptionKey } from './utils/CryptoVault.js';
+import { generateEncryptionKey, encryptChunk, importKeyFromRaw } from './utils/CryptoVault.js';
+import { packEncryptedChunk } from './utils/BinaryPacker.js';
+import FileReceiver from './utils/FileReceiver.js';
+import FileStreamer from './utils/FileStreamer.js';
 import SignalingChannel from './utils/SignalingChannel.js';
 import WebRTCConnection from './utils/WebRTCConnection.js';
+import SpeedGraph from './components/ui/SpeedGraph.js';
 
 const globalStore = new Store({
     initialState: { files: [] }
@@ -29,6 +33,11 @@ dropZone.mount(document.getElementById('app'));
 
 const fileTree = new FileTree({ store: globalStore });
 fileTree.mount(document.getElementById('app'));
+
+// Mount the throughput graph and expose it globally for reporting
+const speedGraph = new SpeedGraph({ store: globalStore });
+speedGraph.mount(document.getElementById('app'));
+window.speedGraph = speedGraph;
 
 // Debug helpers: expose store and log mount status so you can diagnose in DevTools
 window.globalStore = globalStore;
@@ -89,42 +98,17 @@ async function startup() {
 
 startup();
 
-// Test signaling channel connect to local relay server
-async function testSignaling() {
-    const signal = new SignalingChannel('ws://localhost:8080');
-
-    // Both browsers must use the exact same room ID
-    await signal.connect('ghostlink-room-42');
-
-    signal.onMessage((msg) => {
-        console.log('Received from Peer:', msg);
-    });
-
-    // Attach to a global variable so you can trigger it from the console
-    window.sendHello = () => {
-        signal.send({ type: 'CHAT', text: 'Hello from the other side!' });
-    };
-}
-
-testSignaling();
-
 // P2P initialization using Signaling + WebRTC
 async function initP2P() {
     const signal = new SignalingChannel('ws://localhost:8080');
-
-    // For testing, hardcode a room. In production, users would share a link/code.
     await signal.connect('ghostlink-room-42');
 
-    // Decide who is the initiator. For testing, we can use a URL parameter or button.
-    // E.g., if URL has ?init=true, they create the offer.
     const isInitiator = window.location.search.includes('init=true');
-
     const webrtc = new WebRTCConnection(signal, isInitiator);
-    // Expose for manual testing from DevTools
     window.webrtc = webrtc;
 
-    // Route incoming signaling messages to the WebRTC connection
-    signal.onMessage((msg) => {
+    // Route incoming signaling messages to WebRTC + file metadata
+    signal.onMessage(async (msg) => {
         switch (msg.type) {
             case 'OFFER':
                 if (!isInitiator) webrtc.handleOffer(msg.sdp);
@@ -135,17 +119,92 @@ async function initP2P() {
             case 'ICE_CANDIDATE':
                 webrtc.handleIceCandidate(msg.candidate);
                 break;
+
+            // Receiver gets file metadata + raw key from sender via signaling
+            case 'FILE_META':
+                console.log('[FILE_META] received, isInitiator:', isInitiator, msg.fileName);
+                // The server never echoes back to the sender, so receiving FILE_META
+                // always means this tab is the receiver — no isInitiator guard needed.
+                try {
+                    const rawKey = new Uint8Array(msg.rawKey);
+                    const cryptoKey = await importKeyFromRaw(rawKey);
+                    webrtc.fileReceiver = new FileReceiver(
+                        cryptoKey,
+                        msg.totalChunks,
+                        msg.fileName,
+                        msg.mimeType || 'application/octet-stream'
+                    );
+                    window.webrtc = webrtc;
+                    console.log(`✅ FileReceiver ready for "${msg.fileName}" (${msg.totalChunks} chunks)`);
+                } catch (e) {
+                    console.error('Failed to set up FileReceiver from FILE_META', e);
+                }
+                break;
         }
     });
 
-    // If this tab is the initiator, start the handshake!
     if (isInitiator) {
-        // We need a slight delay to ensure the other peer is connected to the WebSocket room
-        // In a real app, Peer B would send a 'READY' WebSocket message first.
-        setTimeout(() => {
-            webrtc.createOffer();
-        }, 2000);
+        setTimeout(() => webrtc.createOffer(), 2000);
     }
+
+    // --- SENDER: called after data channel is open and a file is ready ---
+    window.sendFiles = async (files) => {
+        if (!files || files.length === 0) {
+            console.warn('No files to send.');
+            return;
+        }
+
+        if (!webrtc.dataChannel || webrtc.dataChannel.readyState !== 'open') {
+            console.warn('Data channel not open yet. Wait for "🟢 RTCDataChannel OPEN!" before sending.');
+            return;
+        }
+
+        for (const file of files) {
+            const fileId = Date.now(); // Simple unique ID
+            const mimeType = file.type || 'application/octet-stream';
+
+            // 1. Generate a fresh AES-256-GCM key for this file
+            const cryptoKey = await generateEncryptionKey();
+
+            // 2. Export the raw key bytes so we can send them to the receiver via signaling
+            const rawKey = await crypto.subtle.exportKey('raw', cryptoKey);
+
+            // 3. Count total chunks
+            const totalChunks = Math.ceil(file.size / (64 * 1024));
+
+            // 4. Send file metadata + raw key to the receiver via signaling BEFORE streaming
+            signal.send({
+                type: 'FILE_META',
+                fileId,
+                fileName: file.name,
+                mimeType,
+                totalChunks,
+                rawKey: Array.from(new Uint8Array(rawKey))
+            });
+            console.log(`Sent FILE_META for "${file.name}" (${totalChunks} chunks)`);
+
+            // 5. Give the receiver a short moment to register the FileReceiver
+            await new Promise(r => setTimeout(r, 300));
+
+            // 6. Build an async generator that reads, encrypts and packs each chunk
+            async function* encryptedPacketGenerator() {
+                const chunkGen = createChunkGenerator(file);
+                let chunkIndex = 0;
+                for await (const { buffer } of chunkGen) {
+                    const { iv, encryptedBuffer } = await encryptChunk(cryptoKey, buffer);
+                    const packet = packEncryptedChunk(fileId, chunkIndex, iv, encryptedBuffer);
+                    yield packet;
+                    chunkIndex++;
+                }
+            }
+
+            // 7. Stream all encrypted packets over the data channel
+            console.log(`Streaming "${file.name}"...`);
+            const streamer = new FileStreamer(webrtc.dataChannel);
+            await streamer.stream(encryptedPacketGenerator());
+            console.log(`Done streaming "${file.name}"`);
+        }
+    };
 }
 
-initP2P(); // Auto-start P2P for testing (open two tabs; one with ?init=true)
+initP2P(); // Auto-start P2P (open two tabs; one with ?init=true)

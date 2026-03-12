@@ -1,6 +1,25 @@
 import { unpackEncryptedChunk } from './BinaryPacker.js';
 import { decryptChunk } from './CryptoVault.js';
 
+// Simple per-second counter for incoming bytes
+let bytesTransferredInLastSecond = 0;
+
+// Report to the SpeedGraph if present once per second
+setInterval(() => {
+    try {
+        if (window && window.speedGraph && typeof window.speedGraph.addSpeedData === 'function') {
+            window.speedGraph.addSpeedData(bytesTransferredInLastSecond);
+        }
+    } catch (e) {
+        // ignore when not in browser context
+    }
+    // Debug: log receive speed to console so we can verify counting works
+    if (bytesTransferredInLastSecond > 0) {
+        try { console.log('FileReceiver: bytes last second ->', bytesTransferredInLastSecond); } catch (e) { }
+    }
+    bytesTransferredInLastSecond = 0;
+}, 1000);
+
 export default class FileReceiver {
     constructor(cryptoKey, expectedTotalChunks, fileName, mimeType) {
         this.cryptoKey = cryptoKey;
@@ -38,6 +57,15 @@ export default class FileReceiver {
                 if (this.chunksReceivedCount === this.expectedTotalChunks) {
                     this.assembleFile();
                 }
+            }
+            // Track bytes received for speed graph
+            try {
+                let len = 0;
+                if (decryptedBuffer instanceof ArrayBuffer) len = decryptedBuffer.byteLength;
+                else if (ArrayBuffer.isView(decryptedBuffer)) len = decryptedBuffer.byteLength;
+                bytesTransferredInLastSecond += len;
+            } catch (e) {
+                // ignore
             }
         } catch (error) {
             console.error('Failed to process incoming packet. Key mismatch or corrupted data.', error);

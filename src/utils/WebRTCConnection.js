@@ -48,6 +48,11 @@ export default class WebRTCConnection {
                 console.log('🎉 P2P CONNECTION ESTABLISHED DIRECTLY!');
             }
         };
+
+        // NEW: More granular ICE state changes for debugging
+        this.peerConnection.oniceconnectionstatechange = () => {
+            console.log('ICE connection state:', this.peerConnection.iceConnectionState);
+        };
     }
 
     // NEW: Configure the RTCDataChannel once it exists
@@ -75,6 +80,15 @@ export default class WebRTCConnection {
                 this.fileReceiver = new FileReceiver(key, totalChunks, fileName, mime);
                 console.log('FileReceiver attached:', { fileName, totalChunks });
             };
+
+            // Send a small ping to verify the data channel is usable
+            try {
+                const ping = JSON.stringify({ type: 'PING', ts: Date.now() });
+                this.dataChannel.send(ping);
+                console.log('Sent PING over data channel');
+            } catch (e) {
+                console.warn('Failed to send PING on dataChannel', e);
+            }
         };
 
         this.dataChannel.onclose = () => {
@@ -82,21 +96,36 @@ export default class WebRTCConnection {
         };
 
         this.dataChannel.onmessage = (event) => {
-            // If a FileReceiver has been attached from the app, forward packets to it
+            // If message is a string (control/ping), handle it here
+            if (typeof event.data === 'string') {
+                try {
+                    const msg = JSON.parse(event.data);
+                    console.log('DataChannel control message:', msg);
+                    if (msg.type === 'PING') {
+                        // reply with PONG
+                        try { this.dataChannel.send(JSON.stringify({ type: 'PONG', ts: Date.now(), echo: msg.ts })); } catch (e) { }
+                    }
+                    if (msg.type === 'PONG') {
+                        console.log('Received PONG echo:', msg.echo);
+                    }
+                } catch (e) {
+                    console.log('Received text message on dataChannel:', event.data);
+                }
+                return;
+            }
+
+            // If a FileReceiver has been attached from the app, forward binary packets to it
             if (this.fileReceiver && typeof this.fileReceiver.receivePacket === 'function') {
                 this.fileReceiver.receivePacket(event.data);
                 return;
             }
 
-            // Example for receiver usage (call from your app when you know the key/metadata):
-            // this.fileReceiver = new FileReceiver(sharedKey, 1500, 'video.mp4', 'video/mp4');
-
-            // Fallback: log size for debugging
+            // No FileReceiver attached yet — log a clear warning so the cause is obvious
             try {
                 const len = event.data && event.data.byteLength ? event.data.byteLength : event.data.length || 0;
-                console.log(`Received packet: ${len} bytes`);
+                console.warn(`⚠️ Binary packet received (${len} bytes) but no FileReceiver attached. Waiting for FILE_META signal...`);
             } catch (e) {
-                console.log('Received data on dataChannel', event.data);
+                console.warn('Binary packet received but no FileReceiver attached.', event.data);
             }
         };
     }

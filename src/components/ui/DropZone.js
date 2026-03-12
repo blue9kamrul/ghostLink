@@ -53,15 +53,17 @@ export default class DropZone extends Component {
         const currentFiles = this.props.store.state.files || [];
         this.props.store.state.files = [...currentFiles, ...extractedFiles];
 
-        // Quick test hook: if the chunker test function is exposed, run it on the first file
+        // If the P2P pipeline is ready, stream the dropped files to the other peer
         try {
-            if (typeof window !== 'undefined' && typeof window.testChunker === 'function' && extractedFiles.length > 0) {
-                console.log('Running testChunker on first dropped file...');
-                // Call once and handle rejection
+            if (typeof window !== 'undefined' && typeof window.sendFiles === 'function' && extractedFiles.length > 0) {
+                console.log(`Sending ${extractedFiles.length} file(s) to peer...`);
+                window.sendFiles(extractedFiles).catch(err => console.error('sendFiles error:', err));
+            } else if (typeof window !== 'undefined' && typeof window.testChunker === 'function' && extractedFiles.length > 0) {
+                // Fallback: run chunker test if P2P not yet ready
                 window.testChunker(extractedFiles[0]).catch(err => console.error('testChunker error:', err));
             }
         } catch (err) {
-            console.error('Error calling testChunker:', err);
+            console.error('Error sending files:', err);
         }
     }
 }

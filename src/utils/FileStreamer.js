@@ -1,3 +1,20 @@
+let bytesTransferredInLastSecond = 0;
+
+// Report to the SpeedGraph if present once per second
+setInterval(() => {
+    try {
+        if (window && window.speedGraph && typeof window.speedGraph.addSpeedData === 'function') {
+            window.speedGraph.addSpeedData(bytesTransferredInLastSecond);
+        }
+    } catch (e) {
+        // ignore when not in browser context
+    }
+    if (bytesTransferredInLastSecond > 0) {
+        try { console.log('FileStreamer: bytes last second ->', bytesTransferredInLastSecond); } catch (e) { }
+    }
+    bytesTransferredInLastSecond = 0;
+}, 1000);
+
 export default class FileStreamer {
     constructor(dataChannel) {
         this.channel = dataChannel;
@@ -15,33 +32,50 @@ export default class FileStreamer {
      */
     async stream(packetGenerator) {
         return new Promise((resolve, reject) => {
+            // Holds a packet that failed to send so we retry it before pulling the next one
+            let pendingPacket = null;
 
             const sendNextBatch = async () => {
                 try {
-                    // Keep sending chunks AS LONG AS the network buffer isn't full
                     while (this.channel.bufferedAmount < this.MAX_BUFFER_SIZE) {
-
-                        // Pull the next secure packet from our background worker pipeline
-                        const { value: packet, done } = await packetGenerator.next();
-
-                        if (done) {
-                            console.log('✅ Entire file streamed into the network pipe successfully!');
-
-                            // Clean up the event listener so it doesn't fire unnecessarily 
-                            this.channel.onbufferedamountlow = null;
-                            resolve();
-                            return;
+                        // Retry a packet that previously threw, otherwise pull the next one
+                        let packet;
+                        if (pendingPacket !== null) {
+                            packet = pendingPacket;
+                            pendingPacket = null;
+                        } else {
+                            const { value, done } = await packetGenerator.next();
+                            if (done) {
+                                console.log('✅ Entire file streamed into the network pipe successfully!');
+                                this.channel.onbufferedamountlow = null;
+                                resolve();
+                                return;
+                            }
+                            packet = value;
                         }
 
-                        // Push the binary packet directly into the WebRTC socket
-                        this.channel.send(packet);
+                        try {
+                            this.channel.send(packet);
+                        } catch (sendErr) {
+                            // Chromium can throw OperationError when the internal send queue
+                            // is momentarily over-full. Save the packet and wait for drain.
+                            console.warn('send() threw, waiting for buffer drain...', sendErr.message);
+                            pendingPacket = packet;
+                            return; // onbufferedamountlow will call sendNextBatch()
+                        }
+
+                        // Track bytes sent for the speed graph
+                        try {
+                            let len = 0;
+                            if (packet instanceof ArrayBuffer) len = packet.byteLength;
+                            else if (ArrayBuffer.isView(packet)) len = packet.byteLength;
+                            else if (packet && packet.size) len = packet.size;
+                            bytesTransferredInLastSecond += len;
+                        } catch (e) { /* ignore */ }
                     }
 
-                    // If we break out of the while loop, it means the buffer is FULL.
+                    // Buffer is full — pause until the drain event fires
                     console.warn(`Buffer full (${this.channel.bufferedAmount} bytes). Pausing stream...`);
-
-                    // We do nothing else here. The browser is currently uploading the data.
-                    // The 'onbufferedamountlow' event below will naturally trigger this function again.
 
                 } catch (error) {
                     console.error('Streaming error:', error);
@@ -49,8 +83,7 @@ export default class FileStreamer {
                 }
             };
 
-            // When the network catches up and the buffer drains, WebRTC fires this event automatically.
-            // We tie it to our function to resume pumping data.
+            // Single, stable drain handler — resumes regardless of why we paused
             this.channel.onbufferedamountlow = () => {
                 console.log('Buffer drained. Resuming stream...');
                 sendNextBatch();
